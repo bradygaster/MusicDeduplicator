@@ -43,11 +43,12 @@ public static class AudioLibraryScanner
         try
         {
             var tagFile = TagLib.File.Create(path);
-            data.Artist = tagFile.Tag.FirstArtist;
+            // Prefer performer (track artist). Fall back to album artist or any available artist.
+            data.Artist = tagFile.Tag.FirstPerformer ?? tagFile.Tag.FirstAlbumArtist ?? tagFile.Tag.FirstArtist;
             data.Album = tagFile.Tag.Album;
             data.Title = tagFile.Tag.Title;
             data.Year = tagFile.Tag.Year;
-            data.Duration = tagFile.Properties.Duration;
+            data.Duration = tagFile.Properties?.Duration;
         }
         catch (Exception ex)
         {
