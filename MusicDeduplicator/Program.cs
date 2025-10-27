@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.CommandLine;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -7,20 +8,54 @@ using Spectre.Console;
 
 class Program
 {
-    static void Main(string[] args)
+    static async Task<int> Main(string[] args)
     {
-        string root = args.Length > 0 ? args[0] : @"F:\Music";
+        var rootOption = new Option<DirectoryInfo>(
+            name: "--path",
+     description: "The root directory to scan for music files",
+    getDefaultValue: () => new DirectoryInfo(Environment.CurrentDirectory));
+
+        rootOption.AddAlias("-p");
+
+        var rootCommand = new RootCommand("Music Deduplicator - Find and manage duplicate music files in your library")
+        {
+ rootOption
+        };
+
+        // Set the command name to match the tool name
+        rootCommand.Name = "dedupe";
+
+        rootCommand.SetHandler((DirectoryInfo directory) =>
+        {
+            if (!directory.Exists)
+            {
+                AnsiConsole.MarkupLine($"[red]Error: Directory '{directory.FullName}' does not exist.[/]");
+                Environment.Exit(1);
+            }
+
+            RunDeduplicator(directory.FullName);
+        }, rootOption);
+
+        return await rootCommand.InvokeAsync(args);
+    }
+
+    static int RunDeduplicator(string root)
+    {
+        AnsiConsole.MarkupLine($"[cyan]Scanning directory:[/] {EscapeMarkup(root)}");
+
         var files = AudioLibraryScanner.Scan(root).ToList();
+
+        AnsiConsole.MarkupLine($"[cyan]Found {files.Count} audio files.[/]");
 
         // Build duplicate groups using a stricter comparison algorithm
         var groups = BuildDuplicateGroups(files)
-            .Select((g, i) => new { Index = i + 1, Files = g })
-            .ToList();
+    .Select((g, i) => new { Index = i + 1, Files = g })
+       .ToList();
 
         if (!groups.Any())
         {
             AnsiConsole.MarkupLine("[green]No duplicates found![/]");
-            return;
+            return 0;
         }
 
         AnsiConsole.MarkupLine($"[yellow]Found {groups.Count} duplicate groups.[/]\n");
@@ -78,13 +113,16 @@ class Program
                 while (true)
                 {
                     AnsiConsole.Clear();
+
+                    AnsiConsole.MarkupLine($"[bold cyan]Group {groupIndex + 1} of {groups.Count}[/]\n");
+
                     var table = new Table()
-                        .Border(TableBorder.Rounded)
-                        .AddColumn("[bold]#[/]")
-                        .AddColumn("[bold]Artist[/]")
-                        .AddColumn("[bold]Title[/]")
-                        .AddColumn("[bold]Duration[/]")
-                        .AddColumn("[bold]File Path[/]");
+                  .Border(TableBorder.Rounded)
+                      .AddColumn("[bold]#[/]")
+              .AddColumn("[bold]Artist[/]")
+                      .AddColumn("[bold]Title[/]")
+                   .AddColumn("[bold]Duration[/]")
+                 .AddColumn("[bold]File Path[/]");
 
                     for (int i = 0; i < group.Files.Count; i++)
                     {
@@ -101,11 +139,11 @@ class Program
                         }
 
                         table.AddRow(
-                            indexCol,
-                            artistCol,
-                            titleCol,
-                            durationCol,
-                            EscapeMarkup(f.Path));
+                       indexCol,
+                         artistCol,
+                   titleCol,
+                          durationCol,
+                      EscapeMarkup(f.Path));
                     }
 
                     AnsiConsole.Write(table);
@@ -161,7 +199,7 @@ class Program
                         // Quit application
                         if (globalIsPlaying) { player.Stop(); globalIsPlaying = false; globalPlayingPath = null; globalPlayingIndex = -1; }
                         player.Stop();
-                        return;
+                        return 0;
                     }
                     else if (key.Key == ConsoleKey.Delete)
                     {
@@ -170,8 +208,7 @@ class Program
                         {
                             try
                             {
-                                // If the file being deleted is playing, stop it
-                                // If the file being deleted is currently playing, stop it to release the handle
+                                // If the file being deleted is playing, stop it to release the handle
                                 // but schedule continuation in the next group so playback starts immediately there.
                                 if (globalIsPlaying && globalPlayingPath == fileToDelete.Path)
                                 {
@@ -182,25 +219,33 @@ class Program
                                     globalPlayingIndex = -1;
                                     // Do NOT mark userPaused here - user intends to continue
                                     continuePlayNextGroup = true;
-                                    pendingGroupIndex = groupIndex +1;
+                                    pendingGroupIndex = groupIndex + 1;
+                                    // Immediately move to next group so playback continues there
+                                    moveAfter = 1;
                                 }
 
                                 System.IO.File.Delete(fileToDelete.Path);
                                 group.Files.RemoveAt(selection);
                                 AnsiConsole.MarkupLine("[red]Deleted.[/]");
                                 // Adjust selection
-                                if (selection >= group.Files.Count) selection = Math.Max(0, group.Files.Count -1);
+                                if (selection >= group.Files.Count) selection = Math.Max(0, group.Files.Count - 1);
+
+                                // If we've scheduled a continuation (we deleted the playing file), advance now
+                                if (continuePlayNextGroup)
+                                {
+                                    break; // leave inner loop to advance groups and continue playback
+                                }
 
                                 // If there is only one track left, move to next group automatically
-                                if (group.Files.Count <=1)
+                                if (group.Files.Count <= 1)
                                 {
                                     // if we were playing, remember to continue in next group
                                     if (!continuePlayNextGroup)
                                     {
                                         continuePlayNextGroup = globalIsPlaying && !userPaused;
-                                        pendingGroupIndex = groupIndex +1;
+                                        pendingGroupIndex = groupIndex + 1;
                                     }
-                                    moveAfter =1;
+                                    moveAfter = 1;
                                     break; // leave inner loop to advance groups
                                 }
 
@@ -209,9 +254,9 @@ class Program
                                     if (!continuePlayNextGroup)
                                     {
                                         continuePlayNextGroup = globalIsPlaying && !userPaused;
-                                        pendingGroupIndex = groupIndex +1;
+                                        pendingGroupIndex = groupIndex + 1;
                                     }
-                                    moveAfter =1;
+                                    moveAfter = 1;
                                     break; // group empty -> next group
                                 }
                             }
@@ -353,6 +398,7 @@ class Program
         }
 
         player.Stop();
+        return 0;
     }
 
     // Build duplicate groups with stricter comparison rules to reduce false positives
