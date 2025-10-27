@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Spectre.Console;
@@ -25,8 +27,16 @@ class Program
 
         using var player = new Player();
 
+        // Persist playback state across groups
+        bool globalIsPlaying = false;
+        string? globalPlayingPath = null;
+        int globalPlayingIndex = -1; // index within current group
+        bool userPaused = false; // when true, number keys won't start playback; they only change selection
+
         // Use an index-based loop so we can navigate left/right between groups
         int groupIndex = 0;
+        bool continuePlayNextGroup = false; // if true, when moving to next/prev group start track1
+        int? pendingGroupIndex = null;
         while (groupIndex < groups.Count)
         {
             var group = groups[groupIndex];
@@ -34,12 +44,32 @@ class Program
             while (true)
             {
                 int selection = 0;
-                bool isPlaying = false;
-                string? playingPath = null;
-                int playingIndex = -1;
-                bool userPaused = false; // when true, number keys won't start playback; they only change selection
 
                 if (!group.Files.Any()) break;
+
+                // If arriving to this group with a flag to continue playback, start the first track
+                if (continuePlayNextGroup && group.Files.Count > 0)
+                {
+                    try
+                    {
+                        var first = group.Files[0];
+                        // Start playback for first track in this group (Player.Play stops any previous playback)
+                        player.Play(first.Path);
+                        globalIsPlaying = true;
+                        globalPlayingPath = first.Path;
+                        globalPlayingIndex = 0;
+                        userPaused = false;
+                    }
+                    catch
+                    {
+                        // ignore playback errors here
+                    }
+                    finally
+                    {
+                        continuePlayNextGroup = false;
+                        pendingGroupIndex = null;
+                    }
+                }
 
                 // Default move after leaving this group is to advance to next group
                 int moveAfter = 1;
@@ -62,10 +92,10 @@ class Program
                         var indexCol = (i == selection) ? $"[green]> {i + 1}[/]" : (i + 1).ToString();
                         var artistCol = (i == selection) ? $"[bold]{EscapeMarkup(f.Artist ?? "")}[/]" : EscapeMarkup(f.Artist ?? "");
                         var titleCol = (i == selection) ? $"[bold]{EscapeMarkup(f.Title ?? "")}[/]" : EscapeMarkup(f.Title ?? "");
-                        var durationCol = (i == selection) ? $"[bold]{(f.Duration?.ToString(@"mm\:ss") ?? "")}[/]" : (f.Duration?.ToString(@"mm\:ss") ?? "");
+                        var durationCol = (i == selection) ? $"[bold]{EscapeMarkup(FormatDuration(f.Duration))}[/]" : EscapeMarkup(FormatDuration(f.Duration));
 
                         // Indicate currently playing row
-                        if (isPlaying && playingIndex == i)
+                        if (globalIsPlaying && globalPlayingIndex == i)
                         {
                             indexCol = $"[green]> {i + 1} ▶[/]";
                         }
@@ -79,11 +109,11 @@ class Program
                     }
 
                     AnsiConsole.Write(table);
-                    AnsiConsole.MarkupLine("\n[gray]←/→ to move groups, ↑/↓ to select, [green]P/Enter[/] to play/stop, [cyan]1..9[/] to select/toggle, [red]Del[/] to delete, [blue]N[/] ext, [magenta]Q[/]uit[/]");
+                    AnsiConsole.MarkupLine("\n[gray]←/→ to move groups, ↑/↓ to select, [green]P/Enter[/] to play/stop, [cyan]1..9[/] to select/toggle, [red]Del[/] to delete, [blue]N[/]ext, [magenta]Q[/]uit[/]");
 
-                    if (isPlaying && !string.IsNullOrEmpty(playingPath))
+                    if (globalIsPlaying && !string.IsNullOrEmpty(globalPlayingPath))
                     {
-                        AnsiConsole.MarkupLine($"[green]Playing:[/] {EscapeMarkup(playingPath)}");
+                        AnsiConsole.MarkupLine($"[green]Playing:[/] {EscapeMarkup(globalPlayingPath)}");
                     }
 
                     var key = Console.ReadKey(true);
@@ -103,28 +133,33 @@ class Program
                     else if (key.Key == ConsoleKey.RightArrow)
                     {
                         // Move to next group
-                        if (isPlaying) { player.Stop(); isPlaying = false; playingPath = null; playingIndex = -1; }
+                        // remember whether we should continue playback in the next group
+                        continuePlayNextGroup = globalIsPlaying && !userPaused;
+                        pendingGroupIndex = groupIndex + 1;
+                        // do not stop playback here; destination group's startup (or immediate restart) will call Play which stops previous
                         moveAfter = 1;
                         break;
                     }
                     else if (key.Key == ConsoleKey.LeftArrow)
                     {
                         // Move to previous group
-                        if (isPlaying) { player.Stop(); isPlaying = false; playingPath = null; playingIndex = -1; }
+                        continuePlayNextGroup = globalIsPlaying && !userPaused;
+                        pendingGroupIndex = groupIndex - 1;
                         moveAfter = -1;
                         break;
                     }
                     else if (key.Key == ConsoleKey.N)
                     {
-                        // Next group - stop any playing file first
-                        if (isPlaying) { player.Stop(); isPlaying = false; playingPath = null; playingIndex = -1; }
+                        // Next group - remember to continue if appropriate
+                        continuePlayNextGroup = globalIsPlaying && !userPaused;
+                        pendingGroupIndex = groupIndex + 1;
                         moveAfter = 1;
                         break;
                     }
                     else if (key.Key == ConsoleKey.Q)
                     {
                         // Quit application
-                        if (isPlaying) { player.Stop(); isPlaying = false; playingPath = null; playingIndex = -1; }
+                        if (globalIsPlaying) { player.Stop(); globalIsPlaying = false; globalPlayingPath = null; globalPlayingIndex = -1; }
                         player.Stop();
                         return;
                     }
@@ -136,12 +171,12 @@ class Program
                             try
                             {
                                 // If the file being deleted is playing, stop it
-                                if (isPlaying && playingPath == fileToDelete.Path)
+                                if (globalIsPlaying && globalPlayingPath == fileToDelete.Path)
                                 {
                                     player.Stop();
-                                    isPlaying = false;
-                                    playingPath = null;
-                                    playingIndex = -1;
+                                    globalIsPlaying = false;
+                                    globalPlayingPath = null;
+                                    globalPlayingIndex = -1;
                                     userPaused = true; // respect user's stop intent
                                 }
 
@@ -154,12 +189,17 @@ class Program
                                 // If there is only one track left, move to next group automatically
                                 if (group.Files.Count <= 1)
                                 {
+                                    // if we were playing, remember to continue in next group
+                                    continuePlayNextGroup = globalIsPlaying && !userPaused;
+                                    pendingGroupIndex = groupIndex + 1;
                                     moveAfter = 1;
                                     break; // leave inner loop to advance groups
                                 }
 
                                 if (!group.Files.Any())
                                 {
+                                    continuePlayNextGroup = globalIsPlaying && !userPaused;
+                                    pendingGroupIndex = groupIndex + 1;
                                     moveAfter = 1;
                                     break; // group empty -> next group
                                 }
@@ -179,24 +219,24 @@ class Program
                         if (!group.Files.Any()) continue;
                         var file = group.Files[selection];
 
-                        if (isPlaying && playingIndex == selection)
+                        if (globalIsPlaying && globalPlayingIndex == selection)
                         {
                             // Stop the currently playing file
                             player.Stop();
-                            isPlaying = false;
-                            playingPath = null;
-                            playingIndex = -1;
+                            globalIsPlaying = false;
+                            globalPlayingPath = null;
+                            globalPlayingIndex = -1;
                             userPaused = true; // user manually stopped playback
                             AnsiConsole.MarkupLine("[gray]Stopped.[/]");
                         }
                         else
                         {
                             // Start playing the selected file
-                            if (isPlaying) player.Stop();
+                            if (globalIsPlaying) player.Stop();
                             player.Play(file.Path);
-                            isPlaying = true;
-                            playingPath = file.Path;
-                            playingIndex = selection;
+                            globalIsPlaying = true;
+                            globalPlayingPath = file.Path;
+                            globalPlayingIndex = selection;
                             userPaused = false;
                         }
 
@@ -220,26 +260,26 @@ class Program
                             selection = idx;
 
                             // If currently playing
-                            if (isPlaying)
+                            if (globalIsPlaying)
                             {
-                                if (playingIndex == idx)
+                                if (globalPlayingIndex == idx)
                                 {
                                     // Toggle off the currently playing track
                                     player.Stop();
-                                    isPlaying = false;
-                                    playingPath = null;
-                                    playingIndex = -1;
+                                    globalIsPlaying = false;
+                                    globalPlayingPath = null;
+                                    globalPlayingIndex = -1;
                                     userPaused = true; // record manual stop
                                 }
                                 else
                                 {
                                     // Switch to the newly requested track
-                                    player.Stop();
+                                    if (globalIsPlaying) player.Stop();
                                     var file = group.Files[idx];
                                     player.Play(file.Path);
-                                    isPlaying = true;
-                                    playingPath = file.Path;
-                                    playingIndex = idx;
+                                    globalIsPlaying = true;
+                                    globalPlayingPath = file.Path;
+                                    globalPlayingIndex = idx;
                                     userPaused = false;
                                 }
                             }
@@ -251,9 +291,9 @@ class Program
                                     // Start playback
                                     var file = group.Files[idx];
                                     player.Play(file.Path);
-                                    isPlaying = true;
-                                    playingPath = file.Path;
-                                    playingIndex = idx;
+                                    globalIsPlaying = true;
+                                    globalPlayingPath = file.Path;
+                                    globalPlayingIndex = idx;
                                     userPaused = false;
                                 }
                                 else
@@ -271,7 +311,32 @@ class Program
                 }
 
                 // Leave group's inner loop and move to the requested group direction
-                groupIndex = Math.Clamp(groupIndex + moveAfter, 0, groups.Count);
+                var newIndex = Math.Clamp(groupIndex + moveAfter, 0, Math.Max(0, groups.Count - 1));
+                groupIndex = newIndex;
+
+                // If we have a pending continue flag and valid pendingGroupIndex matches new index, start playback immediately
+                if (continuePlayNextGroup && pendingGroupIndex.HasValue && pendingGroupIndex.Value == groupIndex)
+                {
+                    var nextGroup = groups[groupIndex];
+                    if (nextGroup.Files.Count > 0)
+                    {
+                        try
+                        {
+                            player.Play(nextGroup.Files[0].Path);
+                            globalIsPlaying = true;
+                            globalPlayingPath = nextGroup.Files[0].Path;
+                            globalPlayingIndex = 0;
+                            userPaused = false;
+                        }
+                        catch
+                        {
+                            // ignore
+                        }
+                    }
+                    continuePlayNextGroup = false;
+                    pendingGroupIndex = null;
+                }
+
                 break;
             }
         }
@@ -374,7 +439,7 @@ class Program
             s = Regex.Replace(s, @"\([^)]*\)", "");
             s = Regex.Replace(s, @"\[[^\]]*\]", "");
             // Remove common feat markers as whole words
-            s = Regex.Replace(s, @"\b(?:feat\.?|ft\.?)\b", "", RegexOptions.IgnoreCase);
+            s = Regex.Replace(s, @"\b(?:feat\.?|ft\.? )\b", "", RegexOptions.IgnoreCase);
             s = s.Replace("&", "and");
             s = Regex.Replace(s, "[^a-z0-9\\s]", " ");
             s = Regex.Replace(s, "\\s+", " ").Trim();
@@ -394,5 +459,15 @@ class Program
     {
         if (string.IsNullOrEmpty(text)) return string.Empty;
         return Markup.Escape(text);
+    }
+
+    static string FormatDuration(TimeSpan? ts)
+    {
+        if (ts == null) return string.Empty;
+        var t = ts.Value;
+        // Use total minutes so durations >59 min display properly
+        int minutes = (int)Math.Floor(t.TotalMinutes);
+        int seconds = t.Seconds;
+        return $"{minutes:D2}:{seconds:D2}";
     }
 }

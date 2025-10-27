@@ -44,7 +44,10 @@ public static class AudioLibraryScanner
         {
             var tagFile = TagLib.File.Create(path);
             // Prefer performer (track artist). Fall back to album artist or any available artist.
-            data.Artist = tagFile.Tag.FirstPerformer ?? tagFile.Tag.FirstAlbumArtist ?? tagFile.Tag.FirstArtist;
+            data.Artist = tagFile.Tag.FirstPerformer ?? tagFile.Tag.FirstAlbumArtist
+#pragma warning disable CS0618
+                ?? tagFile.Tag.FirstArtist;
+#pragma warning restore CS0618
             data.Album = tagFile.Tag.Album;
             data.Title = tagFile.Tag.Title;
             data.Year = tagFile.Tag.Year;
