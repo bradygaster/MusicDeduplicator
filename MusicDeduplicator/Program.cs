@@ -170,14 +170,18 @@ class Program
                         {
                             try
                             {
-                                // If the file being deleted is playing, stop it
+                                // If the file being deleted is currently playing, stop it to release the handle
+                                // but schedule continuation in the next group so playback starts immediately there.
                                 if (globalIsPlaying && globalPlayingPath == fileToDelete.Path)
                                 {
                                     player.Stop();
+                                    // Clear current playing info; we'll restart in the next group
                                     globalIsPlaying = false;
                                     globalPlayingPath = null;
                                     globalPlayingIndex = -1;
-                                    userPaused = true; // respect user's stop intent
+                                    // Do NOT mark userPaused here - user intends to continue
+                                    continuePlayNextGroup = true;
+                                    pendingGroupIndex = groupIndex + 1;
                                 }
 
                                 System.IO.File.Delete(fileToDelete.Path);
@@ -190,16 +194,22 @@ class Program
                                 if (group.Files.Count <= 1)
                                 {
                                     // if we were playing, remember to continue in next group
-                                    continuePlayNextGroup = globalIsPlaying && !userPaused;
-                                    pendingGroupIndex = groupIndex + 1;
+                                    if (!continuePlayNextGroup)
+                                    {
+                                        continuePlayNextGroup = globalIsPlaying && !userPaused;
+                                        pendingGroupIndex = groupIndex + 1;
+                                    }
                                     moveAfter = 1;
                                     break; // leave inner loop to advance groups
                                 }
 
                                 if (!group.Files.Any())
                                 {
-                                    continuePlayNextGroup = globalIsPlaying && !userPaused;
-                                    pendingGroupIndex = groupIndex + 1;
+                                    if (!continuePlayNextGroup)
+                                    {
+                                        continuePlayNextGroup = globalIsPlaying && !userPaused;
+                                        pendingGroupIndex = groupIndex + 1;
+                                    }
                                     moveAfter = 1;
                                     break; // group empty -> next group
                                 }
