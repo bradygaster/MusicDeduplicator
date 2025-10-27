@@ -166,10 +166,11 @@ class Program
                     else if (key.Key == ConsoleKey.Delete)
                     {
                         var fileToDelete = group.Files[selection];
-                        if (AnsiConsole.Confirm($"Delete [red]{fileToDelete.FileName}[/]?"))
+                        if (AnsiConsole.Confirm($"Delete [red]{EscapeMarkup(fileToDelete.FileName)}[/]?"))
                         {
                             try
                             {
+                                // If the file being deleted is playing, stop it
                                 // If the file being deleted is currently playing, stop it to release the handle
                                 // but schedule continuation in the next group so playback starts immediately there.
                                 if (globalIsPlaying && globalPlayingPath == fileToDelete.Path)
@@ -181,25 +182,25 @@ class Program
                                     globalPlayingIndex = -1;
                                     // Do NOT mark userPaused here - user intends to continue
                                     continuePlayNextGroup = true;
-                                    pendingGroupIndex = groupIndex + 1;
+                                    pendingGroupIndex = groupIndex +1;
                                 }
 
                                 System.IO.File.Delete(fileToDelete.Path);
                                 group.Files.RemoveAt(selection);
                                 AnsiConsole.MarkupLine("[red]Deleted.[/]");
                                 // Adjust selection
-                                if (selection >= group.Files.Count) selection = Math.Max(0, group.Files.Count - 1);
+                                if (selection >= group.Files.Count) selection = Math.Max(0, group.Files.Count -1);
 
                                 // If there is only one track left, move to next group automatically
-                                if (group.Files.Count <= 1)
+                                if (group.Files.Count <=1)
                                 {
                                     // if we were playing, remember to continue in next group
                                     if (!continuePlayNextGroup)
                                     {
                                         continuePlayNextGroup = globalIsPlaying && !userPaused;
-                                        pendingGroupIndex = groupIndex + 1;
+                                        pendingGroupIndex = groupIndex +1;
                                     }
-                                    moveAfter = 1;
+                                    moveAfter =1;
                                     break; // leave inner loop to advance groups
                                 }
 
@@ -208,15 +209,15 @@ class Program
                                     if (!continuePlayNextGroup)
                                     {
                                         continuePlayNextGroup = globalIsPlaying && !userPaused;
-                                        pendingGroupIndex = groupIndex + 1;
+                                        pendingGroupIndex = groupIndex +1;
                                     }
-                                    moveAfter = 1;
+                                    moveAfter =1;
                                     break; // group empty -> next group
                                 }
                             }
                             catch (Exception ex)
                             {
-                                AnsiConsole.MarkupLine($"[red]Error deleting:[/] {ex.Message}");
+                                AnsiConsole.MarkupLine($"[red]Error deleting:[/] {EscapeMarkup(ex.Message)}");
                             }
                         }
 
