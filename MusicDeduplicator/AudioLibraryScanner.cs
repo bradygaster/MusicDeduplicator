@@ -21,7 +21,15 @@ public static class AudioLibraryScanner
 {
     public static IEnumerable<AudioFileMetadata> Scan(string rootDir)
     {
-        var supportedExts = new[] { ".mp3", ".flac", ".wav", ".ogg", ".m4a" };
+        // Supported audio file extensions:
+        // .mp3 - MPEG Audio Layer 3
+        // .flac - Free Lossless Audio Codec
+        // .wav - Waveform Audio File Format
+        // .ogg - Ogg Vorbis
+        // .m4a - MPEG-4 Audio (AAC or Apple Lossless)
+        // .m4p - MPEG-4 Protected Audio (FairPlay DRM-protected AAC from Apple Music/iTunes)
+        var supportedExts = new[] { ".mp3", ".flac", ".wav", ".ogg", ".m4a", ".m4p" };
+        
         foreach (var file in Directory.EnumerateFiles(rootDir, "*.*", SearchOption.AllDirectories)
                                       .Where(f => supportedExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase)))
         {
